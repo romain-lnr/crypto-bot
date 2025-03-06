@@ -121,12 +121,21 @@ def fetch_all_volatilities(exchange, pairs):
 def count_positions(positions):
     return len([position for position in positions if position.size > 0])
     
+def detect_market_manipulation(df):
+    volume_mean = df['volume'].rolling(window=24).mean()
+    volume_std = df['volume'].rolling(window=24).std()
+    latest_volume = df['volume'].iloc[-1]
+
+    if latest_volume > (volume_mean.iloc[-1] + 0.5 * volume_std.iloc[-1]):
+        return True
+    return False
+
 async def main():
     account = ACCOUNTS["API_SCRIPT"]
 
     margin_mode = "crossed"  # isolated or crossed
     exchange_leverage = 80
-    start_pos = 3.0625
+    start_pos = 3.0625 * 4 # 4 enveloppes 
 
     tf = "1h"
     sl = None
@@ -327,6 +336,11 @@ async def main():
                 print(f"trend:{trend}")
                 volatility = volatilities.get(pair, 0.01)
                 row = df_list[pair].iloc[-2]
+                market_manipulation = detect_market_manipulation(df_list[pair])
+
+                if market_manipulation:
+                    print(f"Manipulation détectée : {pair} ")
+                    continue
 
                 for i in range(len(params[pair]["envelopes"])):
                     if trend == 'bull' or trend == 'range':
