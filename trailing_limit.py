@@ -218,7 +218,8 @@ async def main():
         'password': account["password"],
         'enableRateLimit': True,
     })
-    invert_side = {"long": "short", "short": "long"}
+    invert_pos = {"long": "short", "short": "long"}
+    invert_side = {"buy": "sell", "sell": "buy"} 
     side_effect = {"long": "buy", "short": "sell"} 
     margin_mode = "crossed"  # isolated or crossed
     max_positions = 4
@@ -227,14 +228,16 @@ async def main():
     tf = "1m"
     sl = None
     sl_limit = False
-    sl_master_init = 0.1
-    profit_trigger = 1
+    sl_master_init = 2 #0.2
+    profit_trigger = 2
+    envelope_count = 5
     tp = False
     tp1 = 0.01
     tp2 = 0.02
     reverse_pct = None
     profit_sl_pct = None
     delete_positions = False
+    make_a_position = True
     
 
     # pairs
@@ -418,7 +421,7 @@ async def main():
         )
         existing_position = [
         pos for pos in positions
-        if pos.pair == position.pair and pos.side == invert_side[position.side]
+        if pos.pair == position.pair and pos.side == invert_pos[position.side]
         ]
         row = df_list[position.pair].iloc[-2]
         df = df_list[position.pair]
@@ -429,7 +432,7 @@ async def main():
             tasks_close.append(
                 exchange.place_trigger_order(
                     pair=position.pair,
-                    side=side_effect[invert_side[position.side]],
+                    side=side_effect[invert_pos[position.side]],
                     trigger_price=current_price,
                     price=None,
                     size=exchange.amount_to_precision(position.pair, position.size),
@@ -439,6 +442,7 @@ async def main():
                     error=False,
                 )
             )
+
         if not existing_position and position.pair in stop_losses:
             entry_prices[position.pair] = stop_losses[position.pair] #0.1*volatilities.get(position.pair, 0.03)
             save_entry_prices(entry_prices)
@@ -471,13 +475,13 @@ async def main():
             save_sma_trends(sma_trends)
 
         if position.pair not in verified_positions:
-            verified_positions[position.pair] = {"long": False, "long_size": None, "short": False, "short_size": None, "verified": False}
+            verified_positions[position.pair] = {"long": False, "long_size": None, "short": False, "short_size": None, "entry_price": current_price, "verified": False}
 
             if not existing_position:
                 tasks_open.append(
                     exchange.place_order(
                         pair=position.pair,
-                        side=side_effect[invert_side[position.side]],
+                        side=side_effect[invert_pos[position.side]],
                         price=None,
                         size=exchange.amount_to_precision(position.pair, position.size),
                         type="market",
@@ -494,16 +498,16 @@ async def main():
         envelope_price = 0
         current_trend = sma_trends[position.pair]
 
-        sl_master = sl_master_init
+        sl_master = sl_master_init / 10
         position_value = position.size * current_price
         max_allow_size = usdt_balance / (sl_master*(volatilities.get(position.pair)*100))
-        if position_value >= max_allow_size: entry_limit_mode[position.pair] = True
+        print(max_allow_size)
+        if position_value <= (max_allow_size / (2**envelope_count)): entry_limit_mode[position.pair] = True
         else: entry_limit_mode[position.pair] = False
 
         if position_value > max_allow_size:
             diff_value = position_value / max_allow_size
-            envelope_log = math.ceil(math.log2(max_allow_size / verified_positions[position.pair][invert_side[position.side]]))
-            true_sl_master = 2*sl_master - sl_master / (envelope_log*2)
+            true_sl_master = 2*sl_master - sl_master / (envelope_count*2)
             diff_sl_master = true_sl_master / sl_master
             sl_master = sl_master / diff_value / diff_sl_master
 
@@ -519,17 +523,17 @@ async def main():
                 save_sl_limit(sl_limit)
 
             sl = 0.8*volatilities.get(position.pair, 0.02)
-        profit_sl_pct = 0.4*volatilities.get(position.pair, 0.02)
+        profit_sl_pct = 0.2*volatilities.get(position.pair, 0.02)
 
-        if verified_positions[position.pair][position.side] == False or verified_positions[position.pair][invert_side[position.side]] == False:
+        if verified_positions[position.pair][position.side] == False or verified_positions[position.pair][invert_pos[position.side]] == False:
 
             verified_positions[position.pair][f"{position.side}_size"] = position.size
 
-            if verified_positions[position.pair][f"{invert_side[position.side]}_size"] is None: continue
-            if verified_positions[position.pair][f"{position.side}_size"] != verified_positions[position.pair][f"{invert_side[position.side]}_size"]:
-                if verified_positions[position.pair][f"{position.side}_size"] < verified_positions[position.pair][f"{invert_side[position.side]}_size"]:
+            if verified_positions[position.pair][f"{invert_pos[position.side]}_size"] is None: continue
+            if verified_positions[position.pair][f"{position.side}_size"] != verified_positions[position.pair][f"{invert_pos[position.side]}_size"]:
+                if verified_positions[position.pair][f"{position.side}_size"] < verified_positions[position.pair][f"{invert_pos[position.side]}_size"]:
                     side_to_change = side_effect[position.side]
-                    size_to_change = verified_positions[position.pair][f"{invert_side[position.side]}_size"] - verified_positions[position.pair][f"{position.side}_size"]
+                    size_to_change = verified_positions[position.pair][f"{invert_pos[position.side]}_size"] - verified_positions[position.pair][f"{position.side}_size"]
 
                     tasks_open.append(
                         exchange.place_order(
@@ -544,7 +548,7 @@ async def main():
                         )
                     )
             else:
-                verified_positions[position.pair][invert_side[position.side]] = True
+                verified_positions[position.pair][invert_pos[position.side]] = True
                 verified_positions[position.pair]["verified"] = True
 
             save_verified_positions(verified_positions)
@@ -601,7 +605,7 @@ async def main():
                                 position.pair, reverse_pct #entry_price * (1 + reverse_pct)
                             )
                         else:
-                            envelope_side = "buy"
+                            envelope_side = "sell"
                             if position.pair in envelope_prices:
                                 if float(current_price) < float(envelope_prices[position.pair]['envelope']):
                                     envelope_price = exchange.price_to_precision(
@@ -625,7 +629,7 @@ async def main():
                         position.pair, reverse_pct
                         )
                     else:
-                        envelope_side = "buy"
+                        envelope_side = "sell"
                         if position.pair in envelope_prices:
                             if float(current_price) < float(envelope_prices[position.pair]['envelope']):
                                 envelope_price = exchange.price_to_precision(
@@ -676,7 +680,7 @@ async def main():
                                 position.pair, reverse_pct #entry_price * (1 - reverse_pct)
                             )
                         else:
-                            envelope_side = "sell"
+                            envelope_side = "buy"
                             if position.pair in envelope_prices:
                                 if float(current_price) > float(envelope_prices[position.pair]['envelope']):
                                     envelope_price = exchange.price_to_precision(
@@ -700,7 +704,7 @@ async def main():
                         position.pair, current_price * 1.002
                         )
                     else:
-                        envelope_side = "sell"
+                        envelope_side = "buy"
 
                         if position.pair in envelope_prices:
                             if float(current_price) > float(envelope_prices[position.pair]['envelope']):
@@ -765,13 +769,27 @@ async def main():
                 )
             )
         if envelope_price != 0 and entry_limit_mode[position.pair] == False:
-            tasks_open.append(
+            tasks_close.append(
                 exchange.place_trigger_order(
                     pair=position.pair,
                     side=envelope_side,
                     trigger_price=envelope_price,
                     price=None,
-                    size=exchange.amount_to_precision(position.pair, position.size),
+                    size=exchange.amount_to_precision(position.pair, position.size / 2),
+                    type="market",
+                    reduce=True,
+                    margin_mode=margin_mode,
+                    error=False,
+                )
+            )
+
+            tasks_open.append(
+                exchange.place_trigger_order(
+                    pair=position.pair,
+                    side=invert_side[envelope_side],
+                    trigger_price=exchange.price_to_precision(position.pair, verified_positions[position.pair]["entry_price"]),
+                    price=None,
+                    size=exchange.amount_to_precision(position.pair, verified_positions[position.pair][f"{invert_pos[position.side]}_size"] - position.size),
                     type="market",
                     reduce=False,
                     margin_mode=margin_mode,

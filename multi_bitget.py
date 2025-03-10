@@ -135,7 +135,8 @@ async def main():
 
     margin_mode = "crossed"  # isolated or crossed
     exchange_leverage = 80
-    start_pos = 3.0625 * 4 # 4 enveloppes 
+    sl_master = 2 # 0.2
+    start_pos = 1 * sl_master
 
     tf = "1h"
     sl = None
@@ -143,6 +144,7 @@ async def main():
     tp2 = 0.02
     reverse_pct = None
     profit_sl_pct = None
+    envelope_entry = 2
     max_positions = 4
 
     exchange_ccxt = ccxt.bitget({
@@ -182,7 +184,7 @@ async def main():
         params[pair] = {
         "src": "close",
         "ma_base_window": 7,
-        "envelopes": [1 * volatilities.get(pair, 0.035)],  # Utilise la volatilité ou une valeur par défaut
+        "envelopes": [envelope_entry * volatilities.get(pair, 0.035)],  # Utilise la volatilité ou une valeur par défaut
         "size": None,
         "sides": ["long", "short"],
         }
